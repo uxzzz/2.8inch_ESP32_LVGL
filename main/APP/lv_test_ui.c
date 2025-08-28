@@ -306,6 +306,6 @@ void lv_test_ui(void) {
                     NULL,
                     6,  // 提高优先级，确保数据接收不被阻塞
                     &serial_task_handle,
-                    1); // 指定在核心1上运行
+                    0); // 指定在核心0上运行
     }
 }

@@ -13,8 +13,8 @@
 
 // UART配置参数
 #define UART_PORT_NUM       UART_NUM_1
-#define USART_TX_GPIO_PIN   GPIO_NUM_18
-#define USART_RX_GPIO_PIN   GPIO_NUM_8
+#define USART_TX_GPIO_PIN   GPIO_NUM_1
+#define USART_RX_GPIO_PIN   GPIO_NUM_3
 #define UART_BAUD_RATE     115200           // 波特率
 #define UART_BUF_SIZE      1024             // 缓冲区大小
 

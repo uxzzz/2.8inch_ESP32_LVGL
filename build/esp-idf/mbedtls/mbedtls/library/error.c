@@ -1,1 +1,0 @@
-/home/whx119022/esp/esp-idf/components/mbedtls/mbedtls/library/error.c
