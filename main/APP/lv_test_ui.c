@@ -24,6 +24,11 @@ static lv_timer_t *update_timer = NULL;  // UI更新定时器
 #define SCREEN_HEIGHT 240        // 高度320px
 #define ROW_HEIGHT ((SCREEN_HEIGHT-80) / 3)  // 每行高度约106.67px
 
+
+static TaskHandle_t send_task_handle = NULL;
+static int send_counter = 0;
+static bool enable_send_counter = true;
+
 // 数据结构：记录接收数据状态
 typedef struct {
     uint32_t last_update_tick;     // 上次更新时间
@@ -55,6 +60,8 @@ void uart_receive_task(void *pvParameters) {
                     lv_timer_reset(update_timer);
                 }
             }
+            // 这里可以添加数据处理逻辑，例如解析命令并返回特定响应
+            uart_write_bytes(UART_PORT_NUM, (const char*)temp_buffer, rx_len);
         }
         taskYIELD(); // 短暂让出CPU
     }
@@ -193,6 +200,11 @@ static void destroy_ui_resources() {
         vTaskDelete(serial_task_handle);
         serial_task_handle = NULL;
     }
+    // 新增：删除发送任务
+    if (send_task_handle) {
+        vTaskDelete(send_task_handle);
+        send_task_handle = NULL;
+    }
     
     // 删除流缓冲区
     if (uart_stream_buf) {
@@ -280,6 +292,26 @@ void create_serial_monitor_ui(void) {
     memset(&rx_metrics, 0, sizeof(rx_metrics));
 }
 
+void counter_send_task(void *pvParameters) {
+    char send_buffer[32];
+    
+    while(1) {
+        if (enable_send_counter) {
+            // 格式化计数数据
+            int len = snprintf(send_buffer, sizeof(send_buffer), "COUNT:%d\r\n", send_counter++);
+            
+            // 通过串口发送计数
+            uart_write_bytes(UART_PORT_NUM, send_buffer, len);
+            
+            // 可选：在UI上显示发送的计数（如果需要）
+            // 注意：这里不能直接操作UI，需要通过LVGL定时器或消息队列
+        }
+        
+        // 每秒发送一次
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
 // 主启动程序
 void lv_test_ui(void) {
     
@@ -305,6 +337,16 @@ void lv_test_ui(void) {
                     NULL,
                     6,  // 提高优先级，确保数据接收不被阻塞
                     &serial_task_handle,
+                    0); // 指定在核心0上运行
+    }
+     // 新增：创建计数发送任务
+    if (send_task_handle == NULL) {
+        xTaskCreatePinnedToCore(counter_send_task,
+                    "counter_send_task",
+                    2048,
+                    NULL,
+                    3,  // 较低优先级，不影响UI和接收
+                    &send_task_handle,
                     0); // 指定在核心0上运行
     }
 }

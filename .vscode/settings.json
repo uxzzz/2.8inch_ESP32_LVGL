@@ -8,14 +8,14 @@
     "ESP_ROM_ELF_DIR": "D:\\ESP32\\Espressif\\tools\\esp-rom-elfs\\20240305/",
     "IDF_TARGET": "esp32"
   },
-  "idf.espIdfPathWin": "D:/ESP32/Espressif/frameworks/esp-idf-v5.3.1/",
+  "idf.espIdfPathWin": "d:\\ESP-IDF\\Espressif\\frameworks\\esp-idf-v5.3.1",
   "idf.openOcdConfigs": [
     "interface/ftdi/esp32_devkitj_v1.cfg",
     "target/esp32.cfg"
   ],
-  "idf.portWin": "COM3",
+  "idf.portWin": "COM9",
   "idf.pythonBinPathWin": "D:\\ESP32\\Espressif\\python_env\\idf5.3_py3.11_env\\Scripts\\python.exe",
-  "idf.toolsPathWin": "D:\\ESP32\\Espressif",
+  "idf.toolsPathWin": "d:\\ESP-IDF\\Espressif\\tools",
   "idf.flashType": "UART",
   "files.associations": {
     "lv_port_disp_template.h": "c",
@@ -29,5 +29,6 @@
     "--query-driver=/home/whx119022/.espressif/tools/xtensa-esp-elf/esp-13.2.0_20240530/xtensa-esp-elf/bin/xtensa-esp32-elf-gcc",
     "--compile-commands-dir=/home/whx119022/2.8inch_ESP32_LVGL/build"
   ],
-  "idf.port": "/dev/ttyUSB0"
+  "idf.port": "/dev/ttyUSB0",
+  "idf.pythonInstallPath": "d:\\ESP-IDF\\Espressif\\tools\\tools\\idf-python\\3.11.2\\python.exe"
 }
