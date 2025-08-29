@@ -21,7 +21,13 @@
     "lv_port_disp_template.h": "c",
     "gpio_sig_map.h": "c",
     "uart.h": "c",
-    "gpio.h": "c"
+    "gpio.h": "c",
+    "array": "c",
+    "string": "c",
+    "string_view": "c",
+    "span": "c",
+    "esp_log.h": "c",
+    "math.h": "c"
   },
   "clangd.path": "/home/whx119022/.espressif/tools/esp-clang/16.0.1-fe4f10a809/esp-clang/bin/clangd",
   "clangd.arguments": [
@@ -30,5 +36,5 @@
     "--compile-commands-dir=/home/whx119022/2.8inch_ESP32_LVGL/build"
   ],
   "idf.port": "/dev/ttyUSB0",
-  "idf.pythonInstallPath": "d:\\ESP-IDF\\Espressif\\tools\\tools\\idf-python\\3.11.2\\python.exe"
+  "idf.pythonInstallPath": "/usr/bin/python"
 }

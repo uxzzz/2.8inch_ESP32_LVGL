@@ -14,7 +14,9 @@
 #include "lv_test_ui.h"
 #include "driver/uart.h"
 #include "usart.h"
+#include "esp_log.h"
 
+static const char *TAG = "UART_COMM";
 static void inc_lvgl_tick(void *arg)
 {
     lv_tick_inc(10);
@@ -87,7 +89,7 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_timer_create(&lvgl_tick_timer_args, &lvgl_tick_timer));
     ESP_ERROR_CHECK(esp_timer_start_periodic(lvgl_tick_timer, 10 * 1000));
     uart_comm_init();
-    
+    ESP_LOGI(TAG, "UART初始化完成");
     // 创建UART回显任务
     //xTaskCreate(uart1_test_task, "uart1_test_task", 4096, NULL, 10, NULL);
     

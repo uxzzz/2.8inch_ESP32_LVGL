@@ -25,6 +25,8 @@
 #include "esp_err.h"
 #include "freertos/semphr.h"
 #include "freertos/stream_buffer.h"
+#include <math.h>
+
 void lv_test_ui(void);
 static void send_btn_event_handler(lv_event_t *e);
 static void close_btn_event_handler(lv_event_t *e);

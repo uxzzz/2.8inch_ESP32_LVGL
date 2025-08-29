@@ -1,9 +1,8 @@
 #include "lv_test_ui.h"
 
-LV_FONT_DECLARE(Chinese_1);       /* 声明字体 */
-// extern const lv_font_t Chinese_1;       /* 声明字体 */
-// extern const lv_font_t lv_font_gb2312_wryh_22;
+LV_FONT_DECLARE(Chinese_1);
 LV_FONT_DECLARE(lv_font_gb2312_wryh_26);  
+
 // 定义UI组件变量
 static lv_obj_t *ta_prefix;       // 第一行显示区域（CH1）
 static lv_obj_t *ta_first_line;   // 第二行显示区域（电机1）
@@ -24,14 +23,41 @@ static lv_timer_t *update_timer = NULL;  // UI更新定时器
 #define SCREEN_HEIGHT 240        // 高度320px
 #define ROW_HEIGHT ((SCREEN_HEIGHT-80) / 3)  // 每行高度约106.67px
 
+// 协议帧结构体（与发送端一致）
+typedef struct {
+    uint8_t header;     // 帧头 0xF7
+    uint8_t address;    // 地址 0x10
+    uint8_t length;     // 数据长度 0x0C
+    uint8_t status;     // 状态码
+    uint8_t function;   // 功能码
+    float data[3];      // 3个浮点数电压值
+    uint8_t checksum;   // CRC8校验码
+} __attribute__((packed)) protocol_frame_t;
 
-static TaskHandle_t send_task_handle = NULL;
-static int send_counter = 0;
-static bool enable_send_counter = true;
+// CRC8计算函数（与发送端完全一致）
+static uint8_t crc8_calculate(const uint8_t *data, size_t length) {
+    uint8_t crc = 0x00;
+    uint8_t i;
+    
+    while (length--) {
+        crc ^= *data++;
+        for (i = 0; i < 8; i++) {
+            if (crc & 0x01)
+                crc = (crc >> 1) ^ 0x8C;  // CRC8多项式: x^8 + x^2 + x^1 + 1 (0x107)
+            else
+                crc >>= 1;
+        }
+    }
+    return crc;
+}
 
 // 数据结构：记录接收数据状态
 typedef struct {
     uint32_t last_update_tick;     // 上次更新时间
+    float last_voltage1;           // 上一次的电压1值
+    float last_voltage2;           // 上一次的电压2值
+    float last_voltage3;           // 上一次的电压3值
+    uint8_t last_status;            // 上一次的状态值
 } text_metrics_t;
 
 static text_metrics_t rx_metrics = {0};
@@ -40,6 +66,9 @@ static text_metrics_t rx_metrics = {0};
 static bool is_uart_initialized(void) {
     return true; // 实际项目中需要实现
 }
+
+// 互斥锁用于保护UI更新
+static SemaphoreHandle_t ui_mutex = NULL;
 
 // 串口数据接收任务
 void uart_receive_task(void *pvParameters) {
@@ -60,130 +89,154 @@ void uart_receive_task(void *pvParameters) {
                     lv_timer_reset(update_timer);
                 }
             }
-            // 这里可以添加数据处理逻辑，例如解析命令并返回特定响应
-            uart_write_bytes(UART_PORT_NUM, (const char*)temp_buffer, rx_len);
         }
         taskYIELD(); // 短暂让出CPU
     }
 }
 
-// 提取前三位数字
-static void extract_first_three_digits(const char *buffer, size_t len, char *output) {
-    size_t i = 0;
-    size_t out_idx = 0;
-    size_t digit_count = 0;
-    
-    output[0] = '\0'; // 清空输出
-    
-    // 查找前三位数字
-    for (i = 0; i < len && digit_count < 3; i++) {
-        if (buffer[i] >= '0' && buffer[i] <= '9') {
-            output[out_idx++] = buffer[i];
-            digit_count++;
-        }
+// 检查浮点数是否有效
+static bool is_valid_float(float f) {
+    return !(isnan(f) || isinf(f));
+}
+
+// 安全格式化浮点数
+static void format_float(char *buf, size_t size, float value) {
+    if (is_valid_float(value)) {
+        snprintf(buf, size, "%.2f", value);
+    } else {
+        strncpy(buf, "N/A", size);
     }
-    output[out_idx] = '\0'; // 确保字符串结束
 }
 
 // LVGL定时器回调 - 安全更新UI
 static void update_ui_timer(lv_timer_t *timer) {
     if (uart_stream_buf == NULL) return;
     
-    // 检查缓冲区中可读数据量
-    size_t available = xStreamBufferBytesAvailable(uart_stream_buf);
-    if (available == 0) return;
+    // 每次最多处理5个协议帧
+    uint8_t max_frames = 5;
+    uint8_t frame_count = 0;
+    size_t available;
     
-    // 限制每次处理的最大数据量
-    size_t bytes_to_read = (available > MAX_UPDATE_CHUNK) ? MAX_UPDATE_CHUNK : available;
-    
-    // 创建缓冲区读取数据
-    uint8_t buffer[MAX_UPDATE_CHUNK + 1]; // +1 for null terminator
-    size_t bytes_read = xStreamBufferReceive(uart_stream_buf, buffer, bytes_to_read, 0);
-    
-    if (bytes_read > 0) {
-        // 确保字符串以null结尾
-        buffer[bytes_read] = '\0';
+    while (frame_count < max_frames && 
+          (available = xStreamBufferBytesAvailable(uart_stream_buf)) >= sizeof(protocol_frame_t)) {
+        frame_count++;
         
-        // 提取前三位数字
-        char prefix[4] = "";
-        extract_first_three_digits((char*)buffer, bytes_read, prefix);
+        // 读取完整的协议帧
+        protocol_frame_t frame;
+        size_t bytes_read = xStreamBufferReceive(uart_stream_buf, &frame, sizeof(protocol_frame_t), 0);
         
-        // 创建显示文本缓冲区
-        char display_text[64];
-
-        // 将prefix转换为整数
-        int prefix_value = atoi(prefix);
-
-        // // 设置文本颜色
-        // if ( (prefix_value % 5 == 0)) {
-        //     lv_obj_set_style_text_color(ta_full, lv_color_hex(0xFF0000), LV_PART_MAIN);
-        // } else {
-        //     lv_obj_set_style_text_color(ta_full, lv_color_hex(0x00FF00), LV_PART_MAIN);
-        // }
+        if (bytes_read != sizeof(protocol_frame_t)) {
+            // 读取失败，跳出循环
+            break;
+        }
+        
+        // 验证帧头
+        if (frame.header != 0xF7 || frame.address != 0x10 || frame.length != 0x0C) {
+            // 帧头验证失败，丢弃并继续
+            continue;
+        }
+        
+        // 验证CRC（从address开始到data结束共16字节）
+        uint8_t check_data[16];
+        check_data[0] = frame.address;
+        check_data[1] = frame.length;
+        check_data[2] = frame.status;
+        check_data[3] = frame.function;
+        memcpy(&check_data[4], &frame.data, 12);
+        
+        uint8_t crc_calculated = crc8_calculate(check_data, 16);
+        if (crc_calculated != frame.checksum) {
+            // CRC校验失败，丢弃
+            continue;
+        }
+        
+        // 解析成功，提取数据
+        float voltage1 = frame.data[0]; // 缓冲器电压
+        float voltage2 = frame.data[1]; // 电机1电压
+        float voltage3 = frame.data[2]; // 电机2电压
+        uint8_t status = frame.status;
+        
+        // 获取互斥锁，保护UI更新
+        if (xSemaphoreTake(ui_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            // 更新第一行显示区域（CH1：缓冲器）
+            if (ta_prefix && lv_obj_is_valid(ta_prefix)) {
+                char display_text[64];
+                uint8_t status_buf = status & 0x01; // 取状态码的bit0（缓冲器状态）
                 
-        // 更新第一行显示区域（CH1）
-        if (ta_prefix && lv_obj_is_valid(ta_prefix)) {
-            // 先确定状态和颜色
-            if (prefix_value % 5 == 0) {
-                // 可被5整除，显示异常状态并设置为红色
-                strcpy(display_text, "CH1：");
-                strcat(display_text, prefix);
-                strcat(display_text, "V  状态：异常");
-                lv_obj_set_style_text_color(ta_prefix, lv_color_hex(0xFF0000), LV_PART_MAIN);
-            } else {
-                // 不能被5整除，显示中位状态并设置为绿色
-                strcpy(display_text, "CH1：");
-                strcat(display_text, prefix);
-                strcat(display_text, "V  状态：中位");
-                lv_obj_set_style_text_color(ta_prefix, lv_color_hex(0x00FF00), LV_PART_MAIN);
+                // 仅当值变化时更新
+                if (voltage1 != rx_metrics.last_voltage1 || status_buf != (rx_metrics.last_status & 0x01)) {
+                    char voltage_str[16];
+                    format_float(voltage_str, sizeof(voltage_str), voltage1);
+                    snprintf(display_text, sizeof(display_text), "CH1：%sV  状态：%s", 
+                            voltage_str, status_buf ? "异常" : "正常");
+                    lv_label_set_text(ta_prefix, display_text);
+                    lv_obj_set_style_text_color(ta_prefix, 
+                                              status_buf ? lv_color_hex(0xFF0000) : lv_color_hex(0x00FF00), 
+                                              LV_PART_MAIN);
+                }
             }
-            // 设置文本
-            lv_label_set_text(ta_prefix, display_text);
-        }
-
-        
-        // 更新第二行显示区域（电机1）
-        if (ta_first_line && lv_obj_is_valid(ta_first_line)) {
-            // 先确定状态和颜色
-            if (prefix_value % 5 == 0) {
-                // 可被5整除，显示异常状态并设置为红色
-                strcpy(display_text, "电机1：");
-                strcat(display_text, prefix);
-                strcat(display_text, "V  状态：异常");
-                lv_obj_set_style_text_color(ta_first_line, lv_color_hex(0xFF0000), LV_PART_MAIN);
-            } else {
-                // 不能被5整除，显示正常状态并设置为绿色
-                strcpy(display_text, "电机1：");
-                strcat(display_text, prefix);
-                strcat(display_text, "V  状态：正常");
-                lv_obj_set_style_text_color(ta_first_line, lv_color_hex(0x00FF00), LV_PART_MAIN);
+            
+            // 更新第二行显示区域（电机1） - 特殊优化
+            if (ta_first_line && lv_obj_is_valid(ta_first_line)) {
+                char display_text[64];
+                uint8_t status_m1 = (status >> 1) & 0x01; // 取状态码的bit1（电机1状态）
+                
+                // 仅当值变化时更新
+                if (voltage2 != rx_metrics.last_voltage2 || status_m1 != ((rx_metrics.last_status >> 1) & 0x01)) {
+                    char voltage_str[16];
+                    format_float(voltage_str, sizeof(voltage_str), voltage2);
+                    
+                    // 安全格式化字符串
+                    int len = snprintf(display_text, sizeof(display_text), "电机1：%sV  状态：%s", 
+                                      voltage_str, status_m1 ? "异常" : "正常");
+                    
+                    // 确保字符串终止
+                    if (len >= sizeof(display_text)) {
+                        display_text[sizeof(display_text) - 1] = '\0';
+                    }
+                    
+                    // 设置文本前先锁定对象
+                    lv_obj_invalidate(ta_first_line);
+                    lv_label_set_text(ta_first_line, display_text);
+                    
+                    // 优化颜色设置
+                    const lv_color_t color = status_m1 ? 
+                        lv_color_hex(0xFF0000) : lv_color_hex(0x00FF00);
+                    lv_obj_set_style_text_color(ta_first_line, color, LV_PART_MAIN);
+                    
+                    // 强制重绘和样式刷新
+                    lv_obj_refresh_style(ta_first_line, LV_PART_MAIN, LV_STYLE_PROP_ANY);
+                    lv_obj_invalidate(ta_first_line);
+                }
             }
-            // 设置文本
-            lv_label_set_text(ta_first_line, display_text);
-        }
-        
-        // 更新第三行显示区域（电机2）
-        if (ta_full && lv_obj_is_valid(ta_full)) {
-            // 先确定状态和颜色
-            if (prefix_value % 5 == 0) {
-                // 可被5整除，显示异常状态并设置为红色
-                strcpy(display_text, "电机2：");
-                strcat(display_text, prefix);
-                strcat(display_text, "V  状态：异常");
-                lv_obj_set_style_text_color(ta_full, lv_color_hex(0xFF0000), LV_PART_MAIN);
-            } else {
-                // 不能被5整除，显示正常状态并设置为绿色
-                strcpy(display_text, "电机2：");
-                strcat(display_text, prefix);
-                strcat(display_text, "V  状态：正常");
-                lv_obj_set_style_text_color(ta_full, lv_color_hex(0x00FF00), LV_PART_MAIN);
+            
+            // 更新第三行显示区域（电机2）
+            if (ta_full && lv_obj_is_valid(ta_full)) {
+                char display_text[64];
+                uint8_t status_m2 = (status >> 2) & 0x01; // 取状态码的bit2（电机2状态）
+                
+                // 仅当值变化时更新
+                if (voltage3 != rx_metrics.last_voltage3 || status_m2 != ((rx_metrics.last_status >> 2) & 0x01)) {
+                    char voltage_str[16];
+                    format_float(voltage_str, sizeof(voltage_str), voltage3);
+                    snprintf(display_text, sizeof(display_text), "电机2：%sV  状态：%s", 
+                            voltage_str, status_m2 ? "异常" : "正常");
+                    lv_label_set_text(ta_full, display_text);
+                    lv_obj_set_style_text_color(ta_full, 
+                                              status_m2 ? lv_color_hex(0xFF0000) : lv_color_hex(0x00FF00), 
+                                              LV_PART_MAIN);
+                }
             }
-            // 设置文本
-            lv_label_set_text(ta_full, display_text);
+            
+            // 记录当前值
+            rx_metrics.last_voltage1 = voltage1;
+            rx_metrics.last_voltage2 = voltage2;
+            rx_metrics.last_voltage3 = voltage3;
+            rx_metrics.last_status = status;
+            rx_metrics.last_update_tick = lv_tick_get();
+            
+            xSemaphoreGive(ui_mutex);
         }
-        
-        // 记录更新时间
-        rx_metrics.last_update_tick = lv_tick_get();
     }
 }
 
@@ -200,16 +253,17 @@ static void destroy_ui_resources() {
         vTaskDelete(serial_task_handle);
         serial_task_handle = NULL;
     }
-    // 新增：删除发送任务
-    if (send_task_handle) {
-        vTaskDelete(send_task_handle);
-        send_task_handle = NULL;
-    }
     
     // 删除流缓冲区
     if (uart_stream_buf) {
         vStreamBufferDelete(uart_stream_buf);
         uart_stream_buf = NULL;
+    }
+    
+    // 删除互斥锁
+    if (ui_mutex) {
+        vSemaphoreDelete(ui_mutex);
+        ui_mutex = NULL;
     }
 }
 
@@ -252,68 +306,57 @@ void create_serial_monitor_ui(void) {
     // 第一行显示区域（CH1）
     ta_prefix = lv_label_create(main_container);
     lv_obj_set_size(ta_prefix, SCREEN_WIDTH, ROW_HEIGHT);
-    lv_label_set_text(ta_prefix, "CH1:---V  状态:中位");
+    lv_label_set_text(ta_prefix, "CH1:---V  状态:正常");
     lv_obj_set_style_bg_color(ta_prefix, lv_color_hex(0x111111), LV_PART_MAIN);
-    lv_obj_set_style_text_color(ta_prefix, lv_color_hex(0x00FF00), LV_PART_MAIN); // 红色字体
+    lv_obj_set_style_text_color(ta_prefix, lv_color_hex(0x00FF00), LV_PART_MAIN); 
     lv_obj_set_style_pad_all(ta_prefix, 5, 0);
     lv_obj_set_style_radius(ta_prefix, 0, 0);
     lv_obj_set_style_text_font(ta_prefix, &lv_font_gb2312_wryh_26, LV_STATE_DEFAULT);
     lv_obj_set_style_text_align(ta_prefix, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_clear_flag(ta_prefix, LV_OBJ_FLAG_SCROLLABLE); // 禁用滚动
-    lv_obj_set_style_align(ta_prefix, LV_ALIGN_CENTER, 0); // 垂直居中
+    lv_obj_clear_flag(ta_prefix, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_align(ta_prefix, LV_ALIGN_CENTER, 0);
 
-    // 第二行显示区域（电机1）
+    // 第二行显示区域（电机1） - 增加样式稳定性
     ta_first_line = lv_label_create(main_container);
     lv_obj_set_size(ta_first_line, SCREEN_WIDTH, ROW_HEIGHT);
     lv_label_set_text(ta_first_line, "电机1:---V  状态:正常");
     lv_obj_set_style_bg_color(ta_first_line, lv_color_hex(0x111111), LV_PART_MAIN);
-    lv_obj_set_style_text_color(ta_first_line, lv_color_hex(0x00FF00), LV_PART_MAIN); // 红色字体
+    lv_obj_set_style_text_color(ta_first_line, lv_color_hex(0x00FF00), LV_PART_MAIN);
     lv_obj_set_style_pad_all(ta_first_line, 5, 0);
     lv_obj_set_style_radius(ta_first_line, 0, 0);
     lv_obj_set_style_text_font(ta_first_line, &lv_font_gb2312_wryh_26, LV_STATE_DEFAULT);
     lv_obj_set_style_text_align(ta_first_line, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_clear_flag(ta_first_line, LV_OBJ_FLAG_SCROLLABLE); // 禁用滚动
-    lv_obj_set_style_align(ta_first_line, LV_ALIGN_CENTER, 0); // 垂直居中
+    lv_obj_clear_flag(ta_first_line, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_align(ta_first_line, LV_ALIGN_CENTER, 0);
+    // // 设置固定宽度和高度，避免布局变化
+    // lv_obj_set_width(ta_first_line, SCREEN_WIDTH - 20);
+    // lv_obj_set_height(ta_first_line, ROW_HEIGHT - 5);
+    // lv_obj_set_style_text_letter_space(ta_first_line, 1, 0); // 增加字间距
+    // lv_obj_set_style_text_line_space(ta_first_line, 2, 0); // 增加行间距
 
     // 第三行显示区域（电机2）
     ta_full = lv_label_create(main_container);
     lv_obj_set_size(ta_full, SCREEN_WIDTH, ROW_HEIGHT);
     lv_label_set_text(ta_full, "电机2:---V  状态:正常");
     lv_obj_set_style_bg_color(ta_full, lv_color_hex(0x111111), LV_PART_MAIN);
-    lv_obj_set_style_text_color(ta_full, lv_color_hex(0x00FF00), LV_PART_MAIN); // 红色字体
+    lv_obj_set_style_text_color(ta_full, lv_color_hex(0x00FF00), LV_PART_MAIN);
     lv_obj_set_style_pad_all(ta_full, 5, 0);
     lv_obj_set_style_radius(ta_full, 0, 0);
     lv_obj_set_style_text_font(ta_full, &lv_font_gb2312_wryh_26, LV_STATE_DEFAULT);
     lv_obj_set_style_text_align(ta_full, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_clear_flag(ta_full, LV_OBJ_FLAG_SCROLLABLE); // 禁用滚动
-    lv_obj_set_style_align(ta_full, LV_ALIGN_CENTER, 0); // 垂直居中
+    lv_obj_clear_flag(ta_full, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_align(ta_full, LV_ALIGN_CENTER, 0);
 
     // 初始化缓冲区
     memset(&rx_metrics, 0, sizeof(rx_metrics));
 }
 
-void counter_send_task(void *pvParameters) {
-    char send_buffer[32];
-    
-    while(1) {
-        if (enable_send_counter) {
-            // 格式化计数数据
-            int len = snprintf(send_buffer, sizeof(send_buffer), "COUNT:%d\r\n", send_counter++);
-            
-            // 通过串口发送计数
-            uart_write_bytes(UART_PORT_NUM, send_buffer, len);
-            
-            // 可选：在UI上显示发送的计数（如果需要）
-            // 注意：这里不能直接操作UI，需要通过LVGL定时器或消息队列
-        }
-        
-        // 每秒发送一次
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
-}
-
 // 主启动程序
 void lv_test_ui(void) {
+    // 创建互斥锁
+    if (ui_mutex == NULL) {
+        ui_mutex = xSemaphoreCreateMutex();
+    }
     
     // 创建流缓冲区（如果尚未创建）
     if (uart_stream_buf == NULL) {
@@ -337,16 +380,6 @@ void lv_test_ui(void) {
                     NULL,
                     6,  // 提高优先级，确保数据接收不被阻塞
                     &serial_task_handle,
-                    0); // 指定在核心0上运行
-    }
-     // 新增：创建计数发送任务
-    if (send_task_handle == NULL) {
-        xTaskCreatePinnedToCore(counter_send_task,
-                    "counter_send_task",
-                    2048,
-                    NULL,
-                    3,  // 较低优先级，不影响UI和接收
-                    &send_task_handle,
                     0); // 指定在核心0上运行
     }
 }
