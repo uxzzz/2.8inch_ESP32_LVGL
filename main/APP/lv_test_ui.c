@@ -17,7 +17,6 @@ static lv_timer_t *update_timer = NULL;  // UI更新定时器
 // 流缓冲区配置
 #define STREAM_BUF_SIZE 4096     // 流缓冲区大小
 #define TRIGGER_LEVEL 128        // 触发级别
-#define UART_BUF_SIZE 512        // UART缓冲区大小
 #define MAX_UPDATE_CHUNK 256     // 每次更新最大字节数
 
 // 屏幕尺寸

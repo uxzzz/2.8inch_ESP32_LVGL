@@ -33,6 +33,7 @@ void uart_comm_init(void) {
                        0, 0, NULL, 0);
                        
     ESP_LOGI(TAG, "UART初始化完成");
+    printf("UART1 initialized successfully\n");
 }
 
 /**
@@ -55,7 +56,7 @@ static void uart_receive_task(void *pvParameters) {
     
     while (1) {
         // 接收数据（超时100ms）
-        rx_len = uart_read_bytes(UART_PORT_NUM, g_rx_buf, UART_BUF_SIZE - 1, 100 / portTICK_PERIOD_MS);
+        rx_len = uart_read_bytes(UART_PORT_NUM, g_rx_buf, UART_BUF_SIZE - 1, 1000 / portTICK_PERIOD_MS);
         
         if (rx_len > 0) {
             g_rx_buf[rx_len] = '\0';  // 添加字符串结束符

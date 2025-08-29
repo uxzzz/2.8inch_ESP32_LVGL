@@ -20,7 +20,8 @@
   "files.associations": {
     "lv_port_disp_template.h": "c",
     "gpio_sig_map.h": "c",
-    "uart.h": "c"
+    "uart.h": "c",
+    "gpio.h": "c"
   },
   "clangd.path": "/home/whx119022/.espressif/tools/esp-clang/16.0.1-fe4f10a809/esp-clang/bin/clangd",
   "clangd.arguments": [
