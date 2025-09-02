@@ -45,7 +45,11 @@ void app_main(void)
     uart_comm_init();
     ESP_LOGI(TAG, "UART初始化完成");
     
+    //光电传感器测试
     lv_photogate_ui();
+
+    //电压测试
+    // lv_voltage_ui();
 
     while (1)
     {

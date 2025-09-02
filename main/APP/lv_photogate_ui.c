@@ -1,31 +1,33 @@
 #include "lv_photogate_ui.h"
 
+// 定义字体
+LV_FONT_DECLARE(Chinese_1);
 
-// // 定义UI组件变量
-// static lv_obj_t *ch_a_container;  // 通道A容器
-// static lv_obj_t *ch_b_container;  // 通道B容器
+// 定义UI组件变量
+static lv_obj_t *ch_a_container;  // 通道A容器
+static lv_obj_t *ch_b_container;  // 通道B容器
 
-// // 通道A的UI组件
-// static lv_obj_t *ch_a_title;      // 通道A标题
-// static lv_obj_t *ch_a_feed_in_label;  // 进料次数标签
-// static lv_obj_t *ch_a_feed_in_value;  // 进料次数值
-// static lv_obj_t *ch_a_feed_out_label; // 退料次数标签
-// static lv_obj_t *ch_a_feed_out_value; // 退料次数值
-// static lv_obj_t *ch_a_sensor_a1_label; // 传感器A1标签
-// static lv_obj_t *ch_a_sensor_a1_value; // 传感器A1值
-// static lv_obj_t *ch_a_sensor_a2_label; // 传感器A2标签
-// static lv_obj_t *ch_a_sensor_a2_value; // 传感器A2值
+// 通道A的UI组件
+static lv_obj_t *ch_a_title;      // 通道A标题
+static lv_obj_t *ch_a_feed_in_label;  // 进料次数标签
+static lv_obj_t *ch_a_feed_in_value;  // 进料次数值
+static lv_obj_t *ch_a_feed_out_label; // 退料次数标签
+static lv_obj_t *ch_a_feed_out_value; // 退料次数值
+static lv_obj_t *ch_a_sensor_a1_label; // 传感器A1标签
+static lv_obj_t *ch_a_sensor_a1_value; // 传感器A1值
+static lv_obj_t *ch_a_sensor_a2_label; // 传感器A2标签
+static lv_obj_t *ch_a_sensor_a2_value; // 传感器A2值
 
-// // 通道B的UI组件
-// static lv_obj_t *ch_b_title;      // 通道B标题
-// static lv_obj_t *ch_b_feed_in_label;  // 进料次数标签
-// static lv_obj_t *ch_b_feed_in_value;  // 进料次数值
-// static lv_obj_t *ch_b_feed_out_label; // 退料次数标签
-// static lv_obj_t *ch_b_feed_out_value; // 退料次数值
-// static lv_obj_t *ch_b_sensor_b1_label; // 传感器B1标签
-// static lv_obj_t *ch_b_sensor_b1_value; // 传感器B1值
-// static lv_obj_t *ch_b_sensor_b2_label; // 传感器B2标签
-// static lv_obj_t *ch_b_sensor_b2_value; // 传感器B2值
+// 通道B的UI组件
+static lv_obj_t *ch_b_title;      // 通道B标题
+static lv_obj_t *ch_b_feed_in_label;  // 进料次数标签
+static lv_obj_t *ch_b_feed_in_value;  // 进料次数值
+static lv_obj_t *ch_b_feed_out_label; // 退料次数标签
+static lv_obj_t *ch_b_feed_out_value; // 退料次数值
+static lv_obj_t *ch_b_sensor_b1_label; // 传感器B1标签
+static lv_obj_t *ch_b_sensor_b1_value; // 传感器B1值
+static lv_obj_t *ch_b_sensor_b2_label; // 传感器B2标签
+static lv_obj_t *ch_b_sensor_b2_value; // 传感器B2值
 
 // 任务和流缓冲区
 static TaskHandle_t serial_task_handle = NULL;
@@ -35,14 +37,13 @@ static lv_timer_t *update_timer = NULL;  // UI更新定时器
 // 流缓冲区配置
 #define STREAM_BUF_SIZE 4096     // 流缓冲区大小
 #define TRIGGER_LEVEL 128        // 触发级别
-#define MAX_UPDATE_CHUNK 256     // 每次更新最大字节数
 
 // 屏幕尺寸
 #define SCREEN_WIDTH 320         // 宽度320px
 #define SCREEN_HEIGHT 240        // 高度240px
 #define CHANNEL_WIDTH (SCREEN_WIDTH / 2)  // 每个通道宽度
 
-// 协议帧结构体（与新协议一致）
+// 协议帧结构体
 typedef struct {
     uint8_t header;     // 帧头 0xF7
     uint8_t address;    // 地址 0x10
@@ -66,6 +67,9 @@ typedef struct {
     uint8_t status_code;          // 状态码
 } parsed_data_t;
 
+// 上一次的数据用于比较
+static parsed_data_t last_data = {0};
+
 // CRC8计算函数
 static uint8_t crc8_calculate(const uint8_t *data, size_t length) {
     uint8_t crc = 0x00;
@@ -75,7 +79,7 @@ static uint8_t crc8_calculate(const uint8_t *data, size_t length) {
         crc ^= *data++;
         for (i = 0; i < 8; i++) {
             if (crc & 0x01)
-                crc = (crc >> 1) ^ 0x8C;  // CRC8多项式: x^8 + x^2 + x^1 + 1 (0x107)
+                crc = (crc >> 1) ^ 0x8C;
             else
                 crc >>= 1;
         }
@@ -90,82 +94,18 @@ static SemaphoreHandle_t ui_mutex = NULL;
 void uart_receive_task(void *pvParameters) {
     uint8_t temp_buffer[UART_BUF_SIZE];
     while(1) {
-        // 从串口读取数据
-        int rx_len = uart_read_bytes(UART_PORT_NUM, temp_buffer, UART_BUF_SIZE - 1, 
-                                    pdMS_TO_TICKS(10));
+        int rx_len = uart_read_bytes(UART_PORT_NUM, temp_buffer, UART_BUF_SIZE - 1, pdMS_TO_TICKS(10));
         
-        if (rx_len > 0) {
-            // 写入流缓冲区
-            if (uart_stream_buf != NULL) {
-                xStreamBufferSend(uart_stream_buf, temp_buffer, rx_len, portMAX_DELAY);
-            }
+        if (rx_len > 0 && uart_stream_buf != NULL) {
+            xStreamBufferSend(uart_stream_buf, temp_buffer, rx_len, portMAX_DELAY);
         }
         taskYIELD();
     }
 }
 
-// 创建通道UI
-static void create_channel_ui(lv_obj_t *parent, const char *title, 
-                             lv_obj_t **feed_in_label, lv_obj_t **feed_in_value,
-                             lv_obj_t **feed_out_label, lv_obj_t **feed_out_value,
-                             lv_obj_t **sensor1_label, lv_obj_t **sensor1_value,
-                             lv_obj_t **sensor2_label, lv_obj_t **sensor2_value) {
-    // 创建通道标题
-    lv_obj_t *title_label = lv_label_create(parent);
-    lv_label_set_text(title_label, title);
-    lv_obj_set_style_text_font(title_label, &lv_font_gb2312_wryh_26, LV_PART_MAIN);
-    lv_obj_set_style_text_color(title_label, lv_color_white(), LV_PART_MAIN);
-    lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 10);
-    
-    // 创建进料次数标签和值
-    *feed_in_label = lv_label_create(parent);
-    lv_label_set_text(*feed_in_label, "进料次数：");
-    lv_obj_set_style_text_font(*feed_in_label, &lv_font_gb2312_wryh_26, LV_PART_MAIN);
-    lv_obj_set_style_text_color(*feed_in_label, lv_color_white(), LV_PART_MAIN);
-    lv_obj_align(*feed_in_label, LV_ALIGN_TOP_LEFT, 10, 50);
-    
-    *feed_in_value = lv_label_create(parent);
-    lv_label_set_text(*feed_in_value, "0");
-    lv_obj_set_style_text_font(*feed_in_value, &lv_font_gb2312_wryh_26, LV_PART_MAIN);
-    lv_obj_set_style_text_color(*feed_in_value, lv_color_hex(0x00FF00), LV_PART_MAIN);
-    lv_obj_align_to(*feed_in_value, *feed_in_label, LV_ALIGN_OUT_RIGHT_MID, 5, 0);
-    
-    // 创建退料次数标签和值
-    *feed_out_label = lv_label_create(parent);
-    lv_label_set_text(*feed_out_label, "退料次数：");
-    lv_obj_set_style_text_font(*feed_out_label, &lv_font_gb2312_wryh_26, LV_PART_MAIN);
-    lv_obj_set_style_text_color(*feed_out_label, lv_color_white(), LV_PART_MAIN);
-    lv_obj_align(*feed_out_label, LV_ALIGN_TOP_LEFT, 10, 90);
-    
-    *feed_out_value = lv_label_create(parent);
-    lv_label_set_text(*feed_out_value, "0");
-    lv_obj_set_style_text_font(*feed_out_value, &lv_font_gb2312_wryh_26, LV_PART_MAIN);
-    lv_obj_set_style_text_color(*feed_out_value, lv_color_hex(0x00FF00), LV_PART_MAIN);
-    lv_obj_align_to(*feed_out_value, *feed_out_label, LV_ALIGN_OUT_RIGHT_MID, 5, 0);
-    
-    // 创建传感器1标签和值
-    *sensor1_label = lv_label_create(parent);
-    lv_label_set_text(*sensor1_label, "光电传感器A1：");
-    lv_obj_set_style_text_font(*sensor1_label, &lv_font_gb2312_wryh_26, LV_PART_MAIN);
-    lv_obj_set_style_text_color(*sensor1_label, lv_color_white(), LV_PART_MAIN);
-    lv_obj_align(*sensor1_label, LV_ALIGN_TOP_LEFT, 10, 130);
-    
-    *sensor1_value = lv_label_create(parent);
-    lv_label_set_text(*sensor1_value, "0");
-    lv_obj_set_style_text_font(*sensor1_value, &lv_font_gb2312_wryh_26, LV_PART_MAIN);
-    lv_obj_align_to(*sensor1_value, *sensor1_label, LV_ALIGN_OUT_RIGHT_MID, 5, 0);
-    
-    // 创建传感器2标签和值
-    *sensor2_label = lv_label_create(parent);
-    lv_label_set_text(*sensor2_label, "光电传感器A2：");
-    lv_obj_set_style_text_font(*sensor2_label, &lv_font_gb2312_wryh_26, LV_PART_MAIN);
-    lv_obj_set_style_text_color(*sensor2_label, lv_color_white(), LV_PART_MAIN);
-    lv_obj_align(*sensor2_label, LV_ALIGN_TOP_LEFT, 10, 170);
-    
-    *sensor2_value = lv_label_create(parent);
-    lv_label_set_text(*sensor2_value, "0");
-    lv_obj_set_style_text_font(*sensor2_value, &lv_font_gb2312_wryh_26, LV_PART_MAIN);
-    lv_obj_align_to(*sensor2_value, *sensor2_label, LV_ALIGN_OUT_RIGHT_MID, 5, 0);
+// 检查数据是否有变化
+static bool data_changed(const parsed_data_t *new_data) {
+    return memcmp(new_data, &last_data, sizeof(parsed_data_t)) != 0;
 }
 
 // 解析协议帧
@@ -175,7 +115,7 @@ static bool parse_protocol_frame(const protocol_frame_t *frame, parsed_data_t *d
         return false;
     }
     
-    // 验证CRC（从address开始到data结束共16字节）
+    // 验证CRC
     uint8_t check_data[16];
     check_data[0] = frame->address;
     check_data[1] = frame->length;
@@ -209,10 +149,9 @@ static void update_ui_timer(lv_timer_t *timer) {
     // 每次最多处理5个协议帧
     uint8_t max_frames = 5;
     uint8_t frame_count = 0;
-    size_t available;
     
     while (frame_count < max_frames && 
-          (available = xStreamBufferBytesAvailable(uart_stream_buf)) >= sizeof(protocol_frame_t)) {
+          xStreamBufferBytesAvailable(uart_stream_buf) >= sizeof(protocol_frame_t)) {
         frame_count++;
         
         // 读取完整的协议帧
@@ -229,69 +168,55 @@ static void update_ui_timer(lv_timer_t *timer) {
             continue;
         }
         
+        // 检查数据是否有变化
+        if (!data_changed(&data)) {
+            continue;
+        }
+        
         // 获取互斥锁，保护UI更新
         if (xSemaphoreTake(ui_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
             // 更新通道A
-            if (ch_a_feed_in_value && lv_obj_is_valid(ch_a_feed_in_value)) {
-                char buffer[16];
-                snprintf(buffer, sizeof(buffer), "%d", data.ch0_feed_in_count);
-                lv_label_set_text(ch_a_feed_in_value, buffer);
-            }
+            char buffer[16];
             
-            if (ch_a_feed_out_value && lv_obj_is_valid(ch_a_feed_out_value)) {
-                char buffer[16];
-                snprintf(buffer, sizeof(buffer), "%d", data.ch0_feed_out_count);
-                lv_label_set_text(ch_a_feed_out_value, buffer);
-            }
+            snprintf(buffer, sizeof(buffer), "%d", data.ch0_feed_in_count);
+            lv_label_set_text(ch_a_feed_in_value, buffer);
             
-            if (ch_a_sensor_a1_value && lv_obj_is_valid(ch_a_sensor_a1_value)) {
-                char buffer[16];
-                snprintf(buffer, sizeof(buffer), "%d", data.insert0);
-                lv_label_set_text(ch_a_sensor_a1_value, buffer);
-                lv_obj_set_style_text_color(ch_a_sensor_a1_value, 
-                                          data.insert0 == 0 ? lv_color_hex(0xFF0000) : lv_color_hex(0x00FF00), 
-                                          LV_PART_MAIN);
-            }
+            snprintf(buffer, sizeof(buffer), "%d", data.ch0_feed_out_count);
+            lv_label_set_text(ch_a_feed_out_value, buffer);
             
-            if (ch_a_sensor_a2_value && lv_obj_is_valid(ch_a_sensor_a2_value)) {
-                char buffer[16];
-                snprintf(buffer, sizeof(buffer), "%d", data.feedin0);
-                lv_label_set_text(ch_a_sensor_a2_value, buffer);
-                lv_obj_set_style_text_color(ch_a_sensor_a2_value, 
-                                          data.feedin0 == 0 ? lv_color_hex(0xFF0000) : lv_color_hex(0x00FF00), 
-                                          LV_PART_MAIN);
-            }
+            snprintf(buffer, sizeof(buffer), "%d", data.insert0);
+            lv_label_set_text(ch_a_sensor_a1_value, buffer);
+            lv_obj_set_style_text_color(ch_a_sensor_a1_value, 
+                                      data.insert0 == 0 ? lv_color_hex(0xFF0000) : lv_color_hex(0x00FF00), 
+                                      LV_PART_MAIN);
+            
+            snprintf(buffer, sizeof(buffer), "%d", data.feedin0);
+            lv_label_set_text(ch_a_sensor_a2_value, buffer);
+            lv_obj_set_style_text_color(ch_a_sensor_a2_value, 
+                                      data.feedin0 == 0 ? lv_color_hex(0xFF0000) : lv_color_hex(0x00FF00), 
+                                      LV_PART_MAIN);
             
             // 更新通道B
-            if (ch_b_feed_in_value && lv_obj_is_valid(ch_b_feed_in_value)) {
-                char buffer[16];
-                snprintf(buffer, sizeof(buffer), "%d", data.ch1_feed_in_count);
-                lv_label_set_text(ch_b_feed_in_value, buffer);
-            }
+            snprintf(buffer, sizeof(buffer), "%d", data.ch1_feed_in_count);
+            lv_label_set_text(ch_b_feed_in_value, buffer);
             
-            if (ch_b_feed_out_value && lv_obj_is_valid(ch_b_feed_out_value)) {
-                char buffer[16];
-                snprintf(buffer, sizeof(buffer), "%d", data.ch1_feed_out_count);
-                lv_label_set_text(ch_b_feed_out_value, buffer);
-            }
+            snprintf(buffer, sizeof(buffer), "%d", data.ch1_feed_out_count);
+            lv_label_set_text(ch_b_feed_out_value, buffer);
             
-            if (ch_b_sensor_b1_value && lv_obj_is_valid(ch_b_sensor_b1_value)) {
-                char buffer[16];
-                snprintf(buffer, sizeof(buffer), "%d", data.insert1);
-                lv_label_set_text(ch_b_sensor_b1_value, buffer);
-                lv_obj_set_style_text_color(ch_b_sensor_b1_value, 
-                                          data.insert1 == 0 ? lv_color_hex(0xFF0000) : lv_color_hex(0x00FF00), 
-                                          LV_PART_MAIN);
-            }
+            snprintf(buffer, sizeof(buffer), "%d", data.insert1);
+            lv_label_set_text(ch_b_sensor_b1_value, buffer);
+            lv_obj_set_style_text_color(ch_b_sensor_b1_value, 
+                                      data.insert1 == 0 ? lv_color_hex(0xFF0000) : lv_color_hex(0x00FF00), 
+                                      LV_PART_MAIN);
             
-            if (ch_b_sensor_b2_value && lv_obj_is_valid(ch_b_sensor_b2_value)) {
-                char buffer[16];
-                snprintf(buffer, sizeof(buffer), "%d", data.feedin1);
-                lv_label_set_text(ch_b_sensor_b2_value, buffer);
-                lv_obj_set_style_text_color(ch_b_sensor_b2_value, 
-                                          data.feedin1 == 0 ? lv_color_hex(0xFF0000) : lv_color_hex(0x00FF00), 
-                                          LV_PART_MAIN);
-            }
+            snprintf(buffer, sizeof(buffer), "%d", data.feedin1);
+            lv_label_set_text(ch_b_sensor_b2_value, buffer);
+            lv_obj_set_style_text_color(ch_b_sensor_b2_value, 
+                                      data.feedin1 == 0 ? lv_color_hex(0xFF0000) : lv_color_hex(0x00FF00), 
+                                      LV_PART_MAIN);
+            
+            // 保存当前数据
+            last_data = data;
             
             xSemaphoreGive(ui_mutex);
         }
@@ -300,29 +225,91 @@ static void update_ui_timer(lv_timer_t *timer) {
 
 // 销毁UI资源
 static void destroy_ui_resources() {
-    // 删除定时器
     if (update_timer) {
         lv_timer_del(update_timer);
         update_timer = NULL;
     }
     
-    // 删除任务
     if (serial_task_handle) {
         vTaskDelete(serial_task_handle);
         serial_task_handle = NULL;
     }
     
-    // 删除流缓冲区
     if (uart_stream_buf) {
         vStreamBufferDelete(uart_stream_buf);
         uart_stream_buf = NULL;
     }
     
-    // 删除互斥锁
     if (ui_mutex) {
         vSemaphoreDelete(ui_mutex);
         ui_mutex = NULL;
     }
+}
+
+// 创建通道UI
+static void create_channel_ui(lv_obj_t *parent, const char *title, 
+                             lv_obj_t **feed_in_label, lv_obj_t **feed_in_value,
+                             lv_obj_t **feed_out_label, lv_obj_t **feed_out_value,
+                             lv_obj_t **sensor1_label, lv_obj_t **sensor1_value,
+                             lv_obj_t **sensor2_label, lv_obj_t **sensor2_value,
+                             const char *sensor1_name, const char *sensor2_name) {
+    // 创建通道标题（放在最上方居中）
+    lv_obj_t *title_label = lv_label_create(parent);
+    lv_label_set_text(title_label, title);
+    lv_obj_set_style_text_font(title_label, &Chinese_1, LV_PART_MAIN);
+    lv_obj_set_style_text_color(title_label, lv_color_white(), LV_PART_MAIN);
+    lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 15); // 增加顶部间距
+    
+    // 创建进料次数标签和值
+    *feed_in_label = lv_label_create(parent);
+    lv_label_set_text(*feed_in_label, "进料次数：");
+    lv_obj_set_style_text_font(*feed_in_label, &Chinese_1, LV_PART_MAIN);
+    lv_obj_set_style_text_color(*feed_in_label, lv_color_white(), LV_PART_MAIN);
+    lv_obj_align(*feed_in_label, LV_ALIGN_TOP_LEFT, 20, 60); // 向下移动
+    
+    *feed_in_value = lv_label_create(parent);
+    lv_label_set_text(*feed_in_value, "0");
+    lv_obj_set_style_text_font(*feed_in_value, &Chinese_1, LV_PART_MAIN);
+    lv_obj_set_style_text_color(*feed_in_value, lv_color_hex(0x00FF00), LV_PART_MAIN);
+    lv_obj_align_to(*feed_in_value, *feed_in_label, LV_ALIGN_OUT_RIGHT_MID, 10, 0); // 增加水平间距
+    
+    // 创建退料次数标签和值
+    *feed_out_label = lv_label_create(parent);
+    lv_label_set_text(*feed_out_label, "退料次数：");
+    lv_obj_set_style_text_font(*feed_out_label, &Chinese_1, LV_PART_MAIN);
+    lv_obj_set_style_text_color(*feed_out_label, lv_color_white(), LV_PART_MAIN);
+    lv_obj_align_to(*feed_out_label, *feed_in_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 30); // 增加垂直间距
+    
+    *feed_out_value = lv_label_create(parent);
+    lv_label_set_text(*feed_out_value, "0");
+    lv_obj_set_style_text_font(*feed_out_value, &Chinese_1, LV_PART_MAIN);
+    lv_obj_set_style_text_color(*feed_out_value, lv_color_hex(0x00FF00), LV_PART_MAIN);
+    lv_obj_align_to(*feed_out_value, *feed_out_label, LV_ALIGN_OUT_RIGHT_MID, 10, 0); // 增加水平间距
+    
+    // 创建传感器1标签和值
+    *sensor1_label = lv_label_create(parent);
+    lv_label_set_text(*sensor1_label, sensor1_name);
+    lv_obj_set_style_text_font(*sensor1_label, &Chinese_1, LV_PART_MAIN);
+    lv_obj_set_style_text_color(*sensor1_label, lv_color_white(), LV_PART_MAIN);
+    lv_obj_align_to(*sensor1_label, *feed_out_label, LV_ALIGN_OUT_BOTTOM_LEFT, -5, 30); // 增加垂直间距
+    
+    *sensor1_value = lv_label_create(parent);
+    lv_label_set_text(*sensor1_value, "0");
+    lv_obj_set_style_text_font(*sensor1_value, &Chinese_1, LV_PART_MAIN);
+    lv_obj_align_to(*sensor1_value, *sensor1_label, LV_ALIGN_OUT_RIGHT_MID, 5, 0); // 增加水平间距
+    
+    // 创建传感器2标签和值
+    *sensor2_label = lv_label_create(parent);
+    lv_label_set_text(*sensor2_label, sensor2_name);
+    lv_obj_set_style_text_font(*sensor2_label, &Chinese_1, LV_PART_MAIN);
+    lv_obj_set_style_text_color(*sensor2_label, lv_color_white(), LV_PART_MAIN);
+    // 左移传感器文字并稍微上移A2/B2传感器
+    lv_obj_align_to(*sensor2_label, *sensor1_label, LV_ALIGN_OUT_BOTTOM_LEFT, -5, 25); // 左移5像素，垂直间距减少5像素
+    
+    *sensor2_value = lv_label_create(parent);
+    lv_label_set_text(*sensor2_value, "0");
+    lv_obj_set_style_text_font(*sensor2_value, &Chinese_1, LV_PART_MAIN);
+    lv_obj_align_to(*sensor2_value, *sensor2_label, LV_ALIGN_OUT_RIGHT_MID, 5, 0); // 增加水平间距
 }
 
 // 创建光电门监控界面
@@ -334,43 +321,39 @@ void create_photogate_ui(void) {
     lv_obj_set_style_bg_color(lv_scr_act(), lv_color_black(), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(lv_scr_act(), LV_OPA_100, LV_PART_MAIN);
     
-    // 创建通道A容器
+    // 创建通道A容器 - 去除边框
     ch_a_container = lv_obj_create(lv_scr_act());
     lv_obj_set_size(ch_a_container, CHANNEL_WIDTH, SCREEN_HEIGHT);
     lv_obj_set_pos(ch_a_container, 0, 0);
-    lv_obj_set_style_border_width(ch_a_container, 2, LV_PART_MAIN);
-    lv_obj_set_style_border_color(ch_a_container, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_border_width(ch_a_container, 0, LV_PART_MAIN); // 去除边框
     lv_obj_set_style_bg_color(ch_a_container, lv_color_black(), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(ch_a_container, LV_OPA_100, LV_PART_MAIN);
+    lv_obj_clear_flag(ch_a_container, LV_OBJ_FLAG_SCROLLABLE); // 禁用滚动
     
-    // 创建通道B容器
+    // 创建通道B容器 - 去除边框
     ch_b_container = lv_obj_create(lv_scr_act());
     lv_obj_set_size(ch_b_container, CHANNEL_WIDTH, SCREEN_HEIGHT);
     lv_obj_set_pos(ch_b_container, CHANNEL_WIDTH, 0);
-    lv_obj_set_style_border_width(ch_b_container, 2, LV_PART_MAIN);
-    lv_obj_set_style_border_color(ch_b_container, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_border_width(ch_b_container, 0, LV_PART_MAIN); // 去除边框
     lv_obj_set_style_bg_color(ch_b_container, lv_color_black(), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(ch_b_container, LV_OPA_100, LV_PART_MAIN);
+    lv_obj_clear_flag(ch_b_container, LV_OBJ_FLAG_SCROLLABLE); // 禁用滚动
     
     // 创建通道A的UI
     create_channel_ui(ch_a_container, "通道A", 
                      &ch_a_feed_in_label, &ch_a_feed_in_value,
                      &ch_a_feed_out_label, &ch_a_feed_out_value,
                      &ch_a_sensor_a1_label, &ch_a_sensor_a1_value,
-                     &ch_a_sensor_a2_label, &ch_a_sensor_a2_value);
+                     &ch_a_sensor_a2_label, &ch_a_sensor_a2_value,
+                     "光电传感器A1：", "光电传感器A2：");
     
     // 创建通道B的UI
     create_channel_ui(ch_b_container, "通道B", 
                      &ch_b_feed_in_label, &ch_b_feed_in_value,
                      &ch_b_feed_out_label, &ch_b_feed_out_value,
                      &ch_b_sensor_b1_label, &ch_b_sensor_b1_value,
-                     &ch_b_sensor_b2_label, &ch_b_sensor_b2_value);
-    
-    // 更新传感器标签文本
-    lv_label_set_text(ch_a_sensor_a1_label, "光电传感器A1：");
-    lv_label_set_text(ch_a_sensor_a2_label, "光电传感器A2：");
-    lv_label_set_text(ch_b_sensor_b1_label, "光电传感器B1：");
-    lv_label_set_text(ch_b_sensor_b2_label, "光电传感器B2：");
+                     &ch_b_sensor_b2_label, &ch_b_sensor_b2_value,
+                     "光电传感器B1：", "光电传感器B2：");
 }
 
 // 主启动程序
@@ -390,8 +373,8 @@ void lv_photogate_ui(void) {
     
     // 创建LVGL定时器用于安全更新UI
     if (update_timer == NULL) {
-        update_timer = lv_timer_create(update_ui_timer, 20, NULL);
-        lv_timer_set_repeat_count(update_timer, -1); // 无限重复
+        update_timer = lv_timer_create(update_ui_timer, 50, NULL); // 降低刷新频率为50ms
+        lv_timer_set_repeat_count(update_timer, -1);
     }
     
     // 创建串口接收任务（如果尚未创建）
@@ -400,8 +383,8 @@ void lv_photogate_ui(void) {
                     "uart_receive_task",
                     4096,
                     NULL,
-                    6,  // 提高优先级，确保数据接收不被阻塞
+                    6,
                     &serial_task_handle,
-                    0); // 指定在核心0上运行
+                    0);
     }
 }
