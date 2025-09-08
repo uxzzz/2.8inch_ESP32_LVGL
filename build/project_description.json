@@ -1,7 +1,7 @@
 {
     "version":            "1.1",
     "project_name":       "2.8inch_ESP32_LVGL",
-    "project_version":    "fd87ba1-dirty",
+    "project_version":    "f02ce8d-dirty",
     "project_path":       "C:/Users/118472/Desktop/dianji/LVGL_mf046/2.8inch_ESP32_LVGL",
     "idf_path":           "D:/ESP-IDF/Espressif/frameworks/esp-idf-v5.3.1",
     "build_dir":          "C:/Users/118472/Desktop/dianji/LVGL_mf046/2.8inch_ESP32_LVGL/build",
